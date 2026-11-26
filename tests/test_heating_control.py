@@ -931,3 +931,20 @@ async def test_hot_water_without_tracker_timestamp_counts_as_fresh(heating_contr
 
     assert heating_control.control_setpoint == MINIMUM_SETPOINT
 
+
+async def test_hot_water_with_lagging_tracker_still_suppresses(heating_control, monkeypatch):
+    """A new episode reported before the tracker catches up must not read as stale.
+
+    The tracker keeps the previous episode's ON timestamp until it observes the transition, so an ON
+    timestamp that predates the last OFF belongs to an earlier episode and counts as just started.
+    """
+    _enable_pwm(heating_control, PWMStatus.ON)
+    _report_hot_water(heating_control, monkeypatch)
+    heating_control._device_tracker._last_hot_water_on_at = timestamp() - (DHW_SUPPRESSION_MAX_SECONDS + 100.0)
+    heating_control._device_tracker._last_hot_water_off_at = timestamp() - 10.0
+    heating_control._control_setpoint = 46.2
+
+    await heating_control.update(_make_demand(46.2))
+
+    assert heating_control.control_setpoint == MINIMUM_SETPOINT
+

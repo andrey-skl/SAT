@@ -637,8 +637,9 @@ class SatHeatingControl:
     def _elapsed_since_hot_water_on(self) -> float:
         """The tracker may not have seen the current hot-water episode yet, which then counts as just started."""
         hot_water_on_since = self._device_tracker.hot_water_on_since
+        hot_water_off_since = self._device_tracker.hot_water_off_since
 
-        if hot_water_on_since is None:
+        if hot_water_on_since is None or (hot_water_off_since is not None and hot_water_on_since < hot_water_off_since):
             return 0.0
 
         return timestamp() - hot_water_on_since
