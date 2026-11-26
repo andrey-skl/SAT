@@ -16,6 +16,7 @@ from custom_components.sat.const import (
     CONF_MODE,
     CONF_MODULATION_SUPPRESSION_DELAY_SECONDS,
     CONF_OVERSHOOT_PROTECTION,
+    DHW_SUPPRESSION_MAX_SECONDS,
     HEATER_STARTUP_TIMEFRAME,
     SATURATION_SUSTAIN_SECONDS,
     TARGET_TEMPERATURE_CHANGE_WINDOW_SECONDS,
@@ -878,3 +879,55 @@ async def test_suppression_setpoint_is_clamped_to_maximum(hass, monkeypatch, coo
     await heating_control.update(_make_demand(40.0))
 
     assert heating_control.control_setpoint == 45.0
+
+
+def _report_hot_water(heating_control, monkeypatch) -> None:
+    monkeypatch.setattr(type(heating_control._coordinator), "hot_water_active", property(lambda self: True))
+    monkeypatch.setattr(heating_control._pwm, "update", lambda *args, **kwargs: None)
+
+
+async def test_hot_water_within_cap_forces_minimum_over_stale_setpoint(heating_control, monkeypatch):
+    _enable_pwm(heating_control, PWMStatus.ON)
+    _report_hot_water(heating_control, monkeypatch)
+    heating_control._device_tracker._last_hot_water_on_at = timestamp() - 60.0
+    heating_control._control_setpoint = 46.2
+    heating_control._flame_off_hold_setpoint = 35.0
+
+    await heating_control.update(_make_demand(46.2))
+
+    assert heating_control.control_setpoint == MINIMUM_SETPOINT
+    assert heating_control._flame_off_hold_setpoint is None
+
+
+async def test_stale_hot_water_beyond_cap_resumes_heating_control(heating_control, coordinator, monkeypatch):
+    _enable_pwm(heating_control, PWMStatus.ON)
+    _report_hot_water(heating_control, monkeypatch)
+    monkeypatch.setattr(type(coordinator), "return_temperature", property(lambda self: 30.0))
+
+    heating_control._device_tracker._last_hot_water_on_at = timestamp() - (DHW_SUPPRESSION_MAX_SECONDS + 1.0)
+    heating_control._control_setpoint = MINIMUM_SETPOINT
+
+    await coordinator.async_set_heater_state(HeaterState.OFF)
+    await heating_control.update(_make_demand(46.2))
+
+    assert heating_control.control_setpoint == 30.0 + OFFSET
+
+
+async def test_cold_setpoint_requests_minimum_instead_of_a_stale_value(heating_control):
+    heating_control._control_setpoint = 46.2
+
+    heating_control._compute_pwm_control_setpoint(COLD_SETPOINT)
+
+    assert heating_control.control_setpoint == MINIMUM_SETPOINT
+
+
+async def test_hot_water_without_tracker_timestamp_counts_as_fresh(heating_control, monkeypatch):
+    _enable_pwm(heating_control, PWMStatus.ON)
+    _report_hot_water(heating_control, monkeypatch)
+    heating_control._device_tracker._last_hot_water_on_at = None
+    heating_control._control_setpoint = 46.2
+
+    await heating_control.update(_make_demand(46.2))
+
+    assert heating_control.control_setpoint == MINIMUM_SETPOINT
+
