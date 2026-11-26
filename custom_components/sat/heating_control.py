@@ -17,6 +17,7 @@ from .const import (
     COLD_SETPOINT,
     HEATER_STARTUP_TIMEFRAME,
     DHW_OVERSHOOT_GUARD_SECONDS,
+    DHW_SUPPRESSION_MAX_SECONDS,
     MINIMUM_RELATIVE_MODULATION,
     MINIMUM_SETPOINT, EVENT_SAT_CYCLE_ENDED, UNDERHEAT_SUSTAIN_SECONDS, SATURATION_SUSTAIN_SECONDS, OVERSHOOT_SUSTAIN_SECONDS,
     TARGET_TEMPERATURE_CHANGE_WINDOW_SECONDS,
@@ -112,6 +113,7 @@ class SatHeatingControl:
         self._requested_setpoints: deque[RequestedSetpointSample] = deque()
 
         self._flame_off_hold_setpoint: Optional[float] = None
+        self._stale_hot_water_logged = False
         self._coordinator_listener_remove: Optional[Callable[[], None]] = None
         self._pwm_cycle_listener_remove: Optional[Callable[[], None]] = None
 
@@ -542,8 +544,33 @@ class SatHeatingControl:
         config = self._config
         device_state = self._coordinator.state
 
-        if device_state.hot_water_active or requested_setpoint <= COLD_SETPOINT:
+        if requested_setpoint <= COLD_SETPOINT:
+            self._control_setpoint = MINIMUM_SETPOINT
             return
+
+        if device_state.hot_water_active:
+            elapsed_hot_water = self._elapsed_since_hot_water_on()
+
+            if elapsed_hot_water < DHW_SUPPRESSION_MAX_SECONDS:
+                self._control_setpoint = MINIMUM_SETPOINT
+                self._flame_off_hold_setpoint = None
+
+                _LOGGER.debug(
+                    "Central heating suppressed during hot water for %.0fs (limit %.0fs).",
+                    elapsed_hot_water, DHW_SUPPRESSION_MAX_SECONDS,
+                )
+
+                return
+
+            if not self._stale_hot_water_logged:
+                self._stale_hot_water_logged = True
+
+                _LOGGER.info(
+                    "Hot water reported for %.0fs (>= %.0fs); treating as stale and resuming heating control",
+                    elapsed_hot_water, DHW_SUPPRESSION_MAX_SECONDS,
+                )
+        else:
+            self._stale_hot_water_logged = False
 
         if self._pwm.status == PWMStatus.OFF:
             self._control_setpoint = MINIMUM_SETPOINT
@@ -606,6 +633,16 @@ class SatHeatingControl:
             return 0.0
 
         return timestamp() - flame_on_since
+
+    def _elapsed_since_hot_water_on(self) -> float:
+        """The tracker may not have seen the current hot-water episode yet, which then counts as just started."""
+        hot_water_on_since = self._device_tracker.hot_water_on_since
+        hot_water_off_since = self._device_tracker.hot_water_off_since
+
+        if hot_water_on_since is None or (hot_water_off_since is not None and hot_water_on_since < hot_water_off_since):
+            return 0.0
+
+        return timestamp() - hot_water_on_since
 
     def _compute_continuous_control_setpoint(self, requested_setpoint: float) -> None:
         """Apply the continuous setpoint update based on boiler temperature."""

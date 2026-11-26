@@ -17,6 +17,9 @@ BOILER_DEADBAND = 2
 HEATER_STARTUP_TIMEFRAME = 180
 PWM_IGNITION_TIMEOUT_SECONDS = 600.0
 DHW_OVERSHOOT_GUARD_SECONDS = 300.0
+# Some boilers latch their hot-water status bit for hours without producing hot water. Bound how long a hot-water
+# report may suppress central heating, so the control loop keeps a stale report from freezing the setpoint.
+DHW_SUPPRESSION_MAX_SECONDS = 1800.0
 
 OVERSHOOT_SUSTAIN_SECONDS = 60.0
 OVERSHOOT_REFERENCE_WINDOW_SECONDS = 300.0
