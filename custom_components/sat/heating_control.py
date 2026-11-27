@@ -17,6 +17,8 @@ from .const import (
     COLD_SETPOINT,
     HEATER_STARTUP_TIMEFRAME,
     DHW_OVERSHOOT_GUARD_SECONDS,
+    DHW_IGNITION_GRACE_SECONDS,
+    DHW_FLAME_HOLD_SECONDS,
     DHW_SUPPRESSION_MAX_SECONDS,
     MINIMUM_RELATIVE_MODULATION,
     MINIMUM_SETPOINT, EVENT_SAT_CYCLE_ENDED, UNDERHEAT_SUSTAIN_SECONDS, SATURATION_SUSTAIN_SECONDS, OVERSHOOT_SUSTAIN_SECONDS,
@@ -114,6 +116,8 @@ class SatHeatingControl:
 
         self._flame_off_hold_setpoint: Optional[float] = None
         self._stale_hot_water_logged = False
+        self._unconfirmed_hot_water_logged = False
+        self._dhw_flame_seen_at: Optional[float] = None
         self._coordinator_listener_remove: Optional[Callable[[], None]] = None
         self._pwm_cycle_listener_remove: Optional[Callable[[], None]] = None
 
@@ -551,26 +555,37 @@ class SatHeatingControl:
         if device_state.hot_water_active:
             elapsed_hot_water = self._elapsed_since_hot_water_on()
 
-            if elapsed_hot_water < DHW_SUPPRESSION_MAX_SECONDS:
+            if elapsed_hot_water >= DHW_SUPPRESSION_MAX_SECONDS:
+                # Backstop: keep an unbroken report from freezing central heating forever.
+                if not self._stale_hot_water_logged:
+                    self._stale_hot_water_logged = True
+
+                    _LOGGER.info(
+                        "Hot water reported for %.0fs (>= %.0fs); treating as stale and resuming heating control",
+                        elapsed_hot_water, DHW_SUPPRESSION_MAX_SECONDS,
+                    )
+            elif self._hot_water_draw_is_confirmed(device_state, elapsed_hot_water):
                 self._control_setpoint = MINIMUM_SETPOINT
                 self._flame_off_hold_setpoint = None
 
                 _LOGGER.debug(
-                    "Central heating suppressed during hot water for %.0fs (limit %.0fs).",
+                    "Central heating suppressed during hot water for %.0fs (flame corroborated, limit %.0fs).",
                     elapsed_hot_water, DHW_SUPPRESSION_MAX_SECONDS,
                 )
 
                 return
-
-            if not self._stale_hot_water_logged:
-                self._stale_hot_water_logged = True
+            elif not self._unconfirmed_hot_water_logged:
+                self._unconfirmed_hot_water_logged = True
 
                 _LOGGER.info(
-                    "Hot water reported for %.0fs (>= %.0fs); treating as stale and resuming heating control",
-                    elapsed_hot_water, DHW_SUPPRESSION_MAX_SECONDS,
+                    "Hot water reported for %.0fs but the boiler is not firing (no flame within the %.0fs "
+                    "ignition grace); treating as not a draw and resuming heating control",
+                    elapsed_hot_water, DHW_IGNITION_GRACE_SECONDS,
                 )
         else:
             self._stale_hot_water_logged = False
+            self._unconfirmed_hot_water_logged = False
+            self._dhw_flame_seen_at = None
 
         if self._pwm.status == PWMStatus.OFF:
             self._control_setpoint = MINIMUM_SETPOINT
@@ -623,6 +638,28 @@ class SatHeatingControl:
         )
 
         self._control_setpoint = suppressed_setpoint
+
+    def _hot_water_draw_is_confirmed(self, device_state: DeviceState, elapsed_hot_water: float) -> bool:
+        """Whether a reported hot-water episode is corroborated by the burner.
+
+        The OpenTherm DHW status bit reports "central heating is not being served", not "hot water is being
+        drawn": it also turns on as a side effect of our own PWM OFF phase dropping the CH enable. A real draw
+        physically lights the burner, so the flame is what makes a report evidence. Suppression follows the
+        flame, with an ignition grace at the start of an episode so a draw is not missed before the burner
+        lights, and a hold-off after the flame drops so burner cycling during a long draw cannot switch
+        central heating back on.
+        """
+        if device_state.flame_active:
+            self._dhw_flame_seen_at = timestamp()
+            return True
+
+        if elapsed_hot_water < DHW_IGNITION_GRACE_SECONDS:
+            return True
+
+        if self._dhw_flame_seen_at is not None and (timestamp() - self._dhw_flame_seen_at) < DHW_FLAME_HOLD_SECONDS:
+            return True
+
+        return False
 
     def _elapsed_since_flame_on(self) -> float:
         """The tracker may not have seen the current ignition yet, in which case the flame has just come on."""

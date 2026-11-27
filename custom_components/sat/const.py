@@ -17,8 +17,16 @@ BOILER_DEADBAND = 2
 HEATER_STARTUP_TIMEFRAME = 180
 PWM_IGNITION_TIMEOUT_SECONDS = 600.0
 DHW_OVERSHOOT_GUARD_SECONDS = 300.0
-# Some boilers latch their hot-water status bit for hours without producing hot water. Bound how long a hot-water
-# report may suppress central heating, so the control loop keeps a stale report from freezing the setpoint.
+# A real hot-water draw physically lights the burner; the OpenTherm DHW status bit alone does not prove one. The
+# bit reports "central heating is not being served", so it also turns on as a side effect of our own PWM OFF
+# phase, which made a reported draw suppress the heating that would have cleared it. A reported draw therefore
+# needs the flame to corroborate it, with a short grace so a draw is not missed before the burner lights.
+DHW_IGNITION_GRACE_SECONDS = 15.0
+# Once the flame is seen during a hot-water episode, keep suppressing this long after it drops, so burner
+# modulation or cycling during a long draw cannot flicker central heating back on.
+DHW_FLAME_HOLD_SECONDS = 60.0
+# Bound how long a hot-water report may suppress central heating, so the control loop keeps a stale report
+# from freezing the setpoint. This is a backstop; flame corroboration is the primary mechanism.
 DHW_SUPPRESSION_MAX_SECONDS = 1800.0
 
 OVERSHOOT_SUSTAIN_SECONDS = 60.0
