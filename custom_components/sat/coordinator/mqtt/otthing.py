@@ -74,6 +74,10 @@ class SatOtthingMqttCoordinator(SatMqttCoordinator):
         return bool(self._slave_status().get(DATA_FLAME_ACTIVE))
 
     @property
+    def supports_flame_detection(self) -> bool:
+        return DATA_FLAME_ACTIVE in self._slave_status()
+
+    @property
     def hot_water_active(self) -> bool:
         return bool(
             self._thermostat_status().get(DATA_THERMOSTAT_DHW_ENABLE)

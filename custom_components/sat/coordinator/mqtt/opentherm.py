@@ -67,6 +67,10 @@ class SatOpenThermMqttCoordinator(SatMqttCoordinator):
         return self.data.get(DATA_FLAME_ACTIVE) == STATE_ON
 
     @property
+    def supports_flame_detection(self) -> bool:
+        return DATA_FLAME_ACTIVE in self.data or self.data.get(DATA_FLAME_ACTIVE) is not None
+
+    @property
     def hot_water_active(self) -> bool:
         return self.data.get(DATA_DHW_ENABLE) == STATE_ON
 

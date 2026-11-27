@@ -17,6 +17,8 @@ from .const import (
     COLD_SETPOINT,
     HEATER_STARTUP_TIMEFRAME,
     DHW_OVERSHOOT_GUARD_SECONDS,
+    DHW_IGNITION_GRACE_SECONDS,
+    DHW_FLAME_HOLD_SECONDS,
     DHW_SUPPRESSION_MAX_SECONDS,
     MINIMUM_RELATIVE_MODULATION,
     MINIMUM_SETPOINT, EVENT_SAT_CYCLE_ENDED, UNDERHEAT_SUSTAIN_SECONDS, SATURATION_SUSTAIN_SECONDS, OVERSHOOT_SUSTAIN_SECONDS,
@@ -114,6 +116,8 @@ class SatHeatingControl:
 
         self._flame_off_hold_setpoint: Optional[float] = None
         self._stale_hot_water_logged = False
+        self._unconfirmed_hot_water_logged = False
+        self._dhw_flame_seen_at: Optional[float] = None
         self._coordinator_listener_remove: Optional[Callable[[], None]] = None
         self._pwm_cycle_listener_remove: Optional[Callable[[], None]] = None
 
@@ -247,6 +251,8 @@ class SatHeatingControl:
 
     async def update(self, demand: HeatingDemand) -> None:
         """Apply a new demand update and push commands to the coordinator."""
+        self._track_hot_water_episode()
+
         self._last_requested_setpoint = demand.requested_setpoint
         self._last_outside_temperature = demand.outside_temperature
         self._record_requested_setpoint(demand)
@@ -295,6 +301,8 @@ class SatHeatingControl:
 
     def _handle_coordinator_update(self, time: Optional[datetime] = None) -> None:
         """Track device and cycle state on coordinator updates."""
+        self._track_hot_water_episode()
+
         self._device_tracker.update(
             timestamp=event_timestamp(time),
             last_cycle=self.last_cycle,
@@ -551,26 +559,33 @@ class SatHeatingControl:
         if device_state.hot_water_active:
             elapsed_hot_water = self._elapsed_since_hot_water_on()
 
-            if elapsed_hot_water < DHW_SUPPRESSION_MAX_SECONDS:
+            if elapsed_hot_water >= DHW_SUPPRESSION_MAX_SECONDS:
+                # Backstop: keep an unbroken report from freezing central heating forever.
+                if not self._stale_hot_water_logged:
+                    self._stale_hot_water_logged = True
+
+                    _LOGGER.info(
+                        "Hot water reported for %.0fs (>= %.0fs); treating as stale and resuming heating control",
+                        elapsed_hot_water, DHW_SUPPRESSION_MAX_SECONDS,
+                    )
+            elif self._hot_water_draw_is_confirmed(device_state, elapsed_hot_water):
                 self._control_setpoint = MINIMUM_SETPOINT
                 self._flame_off_hold_setpoint = None
 
                 _LOGGER.debug(
-                    "Central heating suppressed during hot water for %.0fs (limit %.0fs).",
+                    "Central heating suppressed during hot water for %.0fs (flame corroborated, limit %.0fs).",
                     elapsed_hot_water, DHW_SUPPRESSION_MAX_SECONDS,
                 )
 
                 return
-
-            if not self._stale_hot_water_logged:
-                self._stale_hot_water_logged = True
+            elif not self._unconfirmed_hot_water_logged:
+                self._unconfirmed_hot_water_logged = True
 
                 _LOGGER.info(
-                    "Hot water reported for %.0fs (>= %.0fs); treating as stale and resuming heating control",
-                    elapsed_hot_water, DHW_SUPPRESSION_MAX_SECONDS,
+                    "Hot water reported for %.0fs but the boiler is not firing (no flame within the %.0fs "
+                    "ignition grace); treating as not a draw and resuming heating control",
+                    elapsed_hot_water, DHW_IGNITION_GRACE_SECONDS,
                 )
-        else:
-            self._stale_hot_water_logged = False
 
         if self._pwm.status == PWMStatus.OFF:
             self._control_setpoint = MINIMUM_SETPOINT
@@ -623,6 +638,60 @@ class SatHeatingControl:
         )
 
         self._control_setpoint = suppressed_setpoint
+
+    def _hot_water_draw_is_confirmed(self, device_state: DeviceState, elapsed_hot_water: float) -> bool:
+        """Whether a reported hot-water episode is corroborated by the burner.
+
+        The OpenTherm DHW status bit reports "central heating is not being served", not "hot water is being
+        drawn": it also turns on as a side effect of our own PWM OFF phase dropping the CH enable. A real draw
+        physically lights the burner, so the flame is what makes a report evidence. Suppression follows the
+        flame, with an ignition grace at the start of an episode so a draw is not missed before the burner
+        lights, and a hold-off after the flame drops so burner cycling during a long draw cannot switch
+        central heating back on.
+        """
+        flame_active: bool = getattr(device_state, "flame_active", False)
+        corroboration_available = getattr(self._coordinator, "supports_flame_detection", False)
+
+        if not corroboration_available:
+            # The device cannot tell us whether the burner is lit, so flame must not be read as "not a draw".
+            # Fall back to the previous behaviour and let the cap bound the suppression instead.
+            return True
+
+        if flame_active:
+            self._dhw_flame_seen_at = timestamp()
+            return True
+
+        if elapsed_hot_water < DHW_IGNITION_GRACE_SECONDS:
+            return True
+
+        if self._dhw_flame_seen_at is not None and (timestamp() - self._dhw_flame_seen_at) < DHW_FLAME_HOLD_SECONDS:
+            return True
+
+        return False
+
+    def _track_hot_water_episode(self) -> None:
+        """Track the hot-water episode on every coordinator update, whatever the control mode.
+
+        Two things have to happen here rather than inside ``_compute_pwm_control_setpoint``, which is only
+        reached with heating running under PWM:
+
+        * The flame observation is recorded whenever hot water and flame are both active, so a draw that burns
+          while space heating is off, or while control is continuous, still leaves corroboration behind. If it
+          were only recorded during the PWM calculation, heating resuming inside the hold window after a burner
+          pause would restart despite the flame having been seen seconds earlier.
+        * The per-episode state is cleared as soon as the report ends. Otherwise an episode that ends while
+          heating is off, while control is continuous, or while the requested setpoint is cold would leave the
+          flame memory and the log latches behind, and the next unlit episode would inherit a flame timestamp
+          from a previous draw and stay suppressed past its own ignition grace.
+        """
+        if not self._coordinator.state.hot_water_active:
+            self._stale_hot_water_logged = False
+            self._unconfirmed_hot_water_logged = False
+            self._dhw_flame_seen_at = None
+            return
+
+        if self._coordinator.state.flame_active:
+            self._dhw_flame_seen_at = timestamp()
 
     def _elapsed_since_flame_on(self) -> float:
         """The tracker may not have seen the current ignition yet, in which case the flame has just come on."""
