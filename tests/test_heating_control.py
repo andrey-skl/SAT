@@ -1115,3 +1115,32 @@ async def test_hot_water_flame_memory_cleared_when_episode_ends_while_heating_of
     await heating_control.update(_make_demand(46.2))
 
     assert heating_control.control_setpoint == 30.0 + OFFSET
+
+
+async def test_hot_water_flame_observed_while_heating_off_survives_into_pwm(heating_control, coordinator, monkeypatch):
+    """A draw that burns while heating is off must leave corroboration for the hold window.
+
+    The flame timestamp used to be recorded only inside _compute_pwm_control_setpoint, which does not run while
+    heating is off. A genuine draw burning during that time then left no corroboration, and when PWM heating
+    resumed during a burner pause past the ignition grace the heating restarted although the flame had been
+    seen seconds earlier.
+    """
+    _enable_pwm(heating_control, PWMStatus.ON)
+    report = {"hot_water": True}
+    burner = _report_hot_water(heating_control, monkeypatch, flame=True)
+    monkeypatch.setattr(type(coordinator), "hot_water_active", property(lambda self: report["hot_water"]))
+    monkeypatch.setattr(type(coordinator), "return_temperature", property(lambda self: 30.0))
+
+    # The draw burns while no demand is pushed, i.e. only the always-run coordinator path ticks.
+    heating_control._device_tracker._last_hot_water_on_at = timestamp() - 30.0
+    heating_control._handle_coordinator_update()
+
+    assert heating_control._dhw_flame_seen_at is not None
+
+    # PWM heating resumes during a burner pause, past the ignition grace: the hold must still suppress.
+    burner["flame"] = False
+    heating_control._device_tracker._last_hot_water_on_at = timestamp() - (DHW_IGNITION_GRACE_SECONDS + 5.0)
+
+    await heating_control.update(_make_demand(46.2))
+
+    assert heating_control.control_setpoint == MINIMUM_SETPOINT
