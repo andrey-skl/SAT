@@ -251,6 +251,8 @@ class SatHeatingControl:
 
     async def update(self, demand: HeatingDemand) -> None:
         """Apply a new demand update and push commands to the coordinator."""
+        self._track_hot_water_episode()
+
         self._last_requested_setpoint = demand.requested_setpoint
         self._last_outside_temperature = demand.outside_temperature
         self._record_requested_setpoint(demand)
@@ -299,6 +301,8 @@ class SatHeatingControl:
 
     def _handle_coordinator_update(self, time: Optional[datetime] = None) -> None:
         """Track device and cycle state on coordinator updates."""
+        self._track_hot_water_episode()
+
         self._device_tracker.update(
             timestamp=event_timestamp(time),
             last_cycle=self.last_cycle,
@@ -582,10 +586,6 @@ class SatHeatingControl:
                     "ignition grace); treating as not a draw and resuming heating control",
                     elapsed_hot_water, DHW_IGNITION_GRACE_SECONDS,
                 )
-        else:
-            self._stale_hot_water_logged = False
-            self._unconfirmed_hot_water_logged = False
-            self._dhw_flame_seen_at = None
 
         if self._pwm.status == PWMStatus.OFF:
             self._control_setpoint = MINIMUM_SETPOINT
@@ -660,6 +660,22 @@ class SatHeatingControl:
             return True
 
         return False
+
+    def _track_hot_water_episode(self) -> None:
+        """Clear the per-episode hot-water state as soon as the report ends.
+
+        This has to happen on every coordinator update rather than inside ``_compute_pwm_control_setpoint``,
+        which is only reached with heating running under PWM. An episode that ends while heating is off, while
+        control is continuous, or while the requested setpoint is cold would otherwise leave the flame memory
+        and the log latches behind, and the next unlit episode would inherit a flame timestamp from a previous
+        draw and stay suppressed past its own ignition grace.
+        """
+        if self._coordinator.state.hot_water_active:
+            return
+
+        self._stale_hot_water_logged = False
+        self._unconfirmed_hot_water_logged = False
+        self._dhw_flame_seen_at = None
 
     def _elapsed_since_flame_on(self) -> float:
         """The tracker may not have seen the current ignition yet, in which case the flame has just come on."""

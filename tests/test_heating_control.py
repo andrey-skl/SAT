@@ -1075,3 +1075,43 @@ async def test_hot_water_flame_memory_is_cleared_between_episodes(heating_contro
     await heating_control.update(_make_demand(46.2))
 
     assert heating_control._dhw_flame_seen_at is None
+
+
+async def test_hot_water_flame_memory_cleared_when_episode_ends_while_heating_off(heating_control, coordinator, monkeypatch):
+    """An episode ending while heating is off must not leak the flame memory into the next episode.
+
+    The reset cannot live in the hot-water branch of _compute_pwm_control_setpoint, because that branch is only
+    reached with heating running under PWM (or with control continuous, or with a warm requested setpoint).
+    Here the episode ends with heating off, so no demand is pushed at all. Without a reset on the always-run
+    path, the next unlit episode inherits a flame timestamp from the previous draw and stays suppressed for the
+    whole flame hold instead of releasing after its own ignition grace.
+    """
+    _enable_pwm(heating_control, PWMStatus.ON)
+    report = {"hot_water": True}
+    burner = _report_hot_water(heating_control, monkeypatch, flame=True)
+    # Patch after the helper, which sets hot_water_active to a constant True and would otherwise win.
+    monkeypatch.setattr(type(coordinator), "hot_water_active", property(lambda self: report["hot_water"]))
+    monkeypatch.setattr(type(coordinator), "return_temperature", property(lambda self: 30.0))
+
+    heating_control._device_tracker._last_hot_water_on_at = timestamp() - 30.0
+    await heating_control.update(_make_demand(46.2))
+
+    assert heating_control.control_setpoint == MINIMUM_SETPOINT
+    assert heating_control._dhw_flame_seen_at is not None
+
+    # The report ends while heating is off: no demand is pushed, only the always-run coordinator path ticks.
+    report["hot_water"] = False
+    burner["flame"] = False
+    heating_control._handle_coordinator_update()
+
+    assert heating_control._dhw_flame_seen_at is None
+    assert heating_control._unconfirmed_hot_water_logged is False
+    assert heating_control._stale_hot_water_logged is False
+
+    # A new unlit episode must release after its own ignition grace, not the previous hold window.
+    report["hot_water"] = True
+    heating_control._device_tracker._last_hot_water_on_at = timestamp() - (DHW_IGNITION_GRACE_SECONDS + 5.0)
+
+    await heating_control.update(_make_demand(46.2))
+
+    assert heating_control.control_setpoint == 30.0 + OFFSET
