@@ -13,6 +13,7 @@ from pytest_homeassistant_custom_component.common import async_mock_service
 from custom_components.sat.entry_data import SatConfig
 from custom_components.sat.const import (
     COLD_SETPOINT,
+    DHW_IGNITION_GRACE_SECONDS,
     HEATING_CONTROL_SCHEDULE_TIMEOUT_SECONDS,
     CONF_HEATING_CURVE_COEFFICIENT,
     CONF_HEATING_MODE,
@@ -643,6 +644,33 @@ async def test_heating_blocked_by_names_the_reason(monkeypatch, demand_control, 
 
     demand_control._fail_safe.update(ControlSignal.OUTSIDE_TEMPERATURE, 1000.0)
     assert demand_control.heating_blocked_by is HeatingBlock.INPUTS_MISSING
+
+
+async def test_heating_blocked_by_hot_water_needs_burner_corroboration(monkeypatch, demand_control, coordinator):
+    """The DHW status bit alone must not be shown as the block while heating is running.
+
+    The bit reports "central heating is not being served", so it also turns on as a side effect of the PWM OFF
+    phase. The attribute has to follow the same corroboration rule as the setpoint, otherwise it claims hot
+    water while the control loop is heating.
+    """
+    heating_control = demand_control._heating_control
+    demand_control._hvac_mode = HVACMode.HEAT
+
+    monkeypatch.setattr(type(coordinator), "hot_water_active", property(lambda self: True))
+    monkeypatch.setattr(type(coordinator), "flame_active", property(lambda self: False))
+    monkeypatch.setattr(type(coordinator), "supports_flame_detection", property(lambda self: True))
+    heating_control._device_tracker._last_hot_water_on_at = timestamp() - 60.0
+
+    assert demand_control.heating_blocked_by is None
+
+    monkeypatch.setattr(type(coordinator), "flame_active", property(lambda self: True))
+
+    # A flame that has only just lit proves nothing: it could be a CH relight provoked by our own setpoint.
+    heating_control._device_tracker._last_flame_on_at = timestamp()
+    assert demand_control.heating_blocked_by is None
+
+    heating_control._device_tracker._last_flame_on_at = timestamp() - (DHW_IGNITION_GRACE_SECONDS + 1.0)
+    assert demand_control.heating_blocked_by is HeatingBlock.HOT_WATER
 
 
 async def test_frost_protection_is_not_blocked_by_being_off(demand_control):

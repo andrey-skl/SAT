@@ -1,6 +1,7 @@
 """Tests focused on heating control behavior."""
 
 import asyncio
+import logging
 from typing import Optional
 from unittest.mock import AsyncMock
 
@@ -17,6 +18,9 @@ from custom_components.sat.const import (
     CONF_MODE,
     CONF_MODULATION_SUPPRESSION_DELAY_SECONDS,
     CONF_OVERSHOOT_PROTECTION,
+    DHW_FLAME_HOLD_SECONDS,
+    DHW_IGNITION_GRACE_SECONDS,
+    DHW_SUPPRESSION_MAX_SECONDS,
     HEATER_STARTUP_TIMEFRAME,
     SATURATION_SUSTAIN_SECONDS,
     TARGET_TEMPERATURE_CHANGE_WINDOW_SECONDS,
@@ -35,7 +39,7 @@ from custom_components.sat.heating_control import (
 )
 from custom_components.sat.helpers import timestamp
 from custom_components.sat.manufacturer import ManufacturerFactory
-from custom_components.sat.types import HeaterState, PWMStatus
+from custom_components.sat.types import HeaterState, PWMStatus, RelativeModulationState
 
 pytestmark = pytest.mark.parametrize(
     ("domains", "data", "options", "config"),
@@ -918,3 +922,412 @@ async def test_backend_that_never_returns_does_not_block_the_next_command(heatin
     await heating_control.async_release()
 
     assert coordinator.released is True
+
+
+OFFSET = OPTIONS_DEFAULTS[CONF_FLAME_OFF_SETPOINT_OFFSET_CELSIUS]
+
+
+def _report_hot_water(heating_control, monkeypatch, *, flame: bool = False, persisted: bool = True) -> dict:
+    """Report hot water, and return the burner flag so a test can light or drop the flame mid-episode.
+
+    Also declares flame detection as supported, because the base coordinator derives flame activity from the
+    heating state instead of measuring it and therefore reports no corroboration capability by default. A lit
+    flame is recorded as a running ignition in the device tracker, since corroboration requires the flame to
+    have persisted through the ignition grace; pass ``persisted=False`` to model one that has only just lit.
+    """
+    burner = {"flame": flame}
+
+    monkeypatch.setattr(type(heating_control._coordinator), "hot_water_active", property(lambda self: True))
+    monkeypatch.setattr(type(heating_control._coordinator), "flame_active", property(lambda self: burner["flame"]))
+    monkeypatch.setattr(type(heating_control._coordinator), "supports_flame_detection", property(lambda self: True))
+    monkeypatch.setattr(heating_control._pwm, "update", lambda *args, **kwargs: None)
+
+    if flame:
+        elapsed = (DHW_IGNITION_GRACE_SECONDS + 2.0) if persisted else 0.0
+        heating_control._device_tracker._last_flame_on_at = timestamp() - elapsed
+
+    return burner
+
+
+async def test_hot_water_within_cap_forces_minimum_over_stale_setpoint(heating_control, monkeypatch):
+    _enable_pwm(heating_control, PWMStatus.ON)
+    _report_hot_water(heating_control, monkeypatch, flame=True)
+    heating_control._device_tracker._last_hot_water_on_at = timestamp() - 60.0
+    heating_control._control_setpoint = 46.2
+    heating_control._flame_off_hold_setpoint = 35.0
+
+    await heating_control.update(_make_demand(46.2))
+
+    assert heating_control.control_setpoint == MINIMUM_SETPOINT
+    assert heating_control._flame_off_hold_setpoint is None
+
+
+async def test_stale_hot_water_beyond_cap_resumes_heating_control(heating_control, coordinator, monkeypatch):
+    _enable_pwm(heating_control, PWMStatus.ON)
+    _report_hot_water(heating_control, monkeypatch)
+    monkeypatch.setattr(type(coordinator), "return_temperature", property(lambda self: 30.0))
+
+    heating_control._device_tracker._last_hot_water_on_at = timestamp() - (DHW_SUPPRESSION_MAX_SECONDS + 1.0)
+    heating_control._control_setpoint = MINIMUM_SETPOINT
+
+    await coordinator.async_set_heater_state(HeaterState.OFF)
+    await heating_control.update(_make_demand(46.2))
+
+    assert heating_control.control_setpoint == 30.0 + OFFSET
+
+
+async def test_hot_water_without_tracker_timestamp_counts_as_fresh(heating_control, monkeypatch):
+    _enable_pwm(heating_control, PWMStatus.ON)
+    _report_hot_water(heating_control, monkeypatch)
+    heating_control._device_tracker._last_hot_water_on_at = None
+    heating_control._control_setpoint = 46.2
+
+    await heating_control.update(_make_demand(46.2))
+
+    assert heating_control.control_setpoint == MINIMUM_SETPOINT
+
+
+async def test_hot_water_with_lagging_tracker_still_suppresses(heating_control, monkeypatch):
+    """A new episode reported before the tracker catches up must not read as stale.
+
+    The tracker keeps the previous episode's ON timestamp until it observes the transition, so an ON
+    timestamp that predates the last OFF belongs to an earlier episode and counts as just started.
+    """
+    _enable_pwm(heating_control, PWMStatus.ON)
+    _report_hot_water(heating_control, monkeypatch)
+    heating_control._device_tracker._last_hot_water_on_at = timestamp() - (DHW_SUPPRESSION_MAX_SECONDS + 100.0)
+    heating_control._device_tracker._last_hot_water_off_at = timestamp() - 10.0
+    heating_control._control_setpoint = 46.2
+
+    await heating_control.update(_make_demand(46.2))
+
+    assert heating_control.control_setpoint == MINIMUM_SETPOINT
+
+
+async def test_hot_water_without_tracker_timestamp_still_hits_the_cap(heating_control, coordinator, monkeypatch):
+    """A report the tracker never timestamped must still be bounded by the backstop.
+
+    _elapsed_since_hot_water_on used to return 0.0 when the tracker had no ON timestamp, which reads as "just
+    started" forever and disables the only guard a stale report has.
+    """
+    _enable_pwm(heating_control, PWMStatus.ON)
+    _report_hot_water(heating_control, monkeypatch, flame=False)
+    monkeypatch.setattr(type(coordinator), "supports_flame_detection", property(lambda self: False))
+    monkeypatch.setattr(type(coordinator), "return_temperature", property(lambda self: 30.0))
+
+    heating_control._device_tracker._last_hot_water_on_at = None
+    heating_control._hot_water_episode_started_at = timestamp() - (DHW_SUPPRESSION_MAX_SECONDS + 1.0)
+
+    await heating_control.update(_make_demand(46.2))
+
+    assert heating_control.control_setpoint == 30.0 + OFFSET
+
+
+async def test_elapsed_since_hot_water_on_clamps_a_backwards_clock(heating_control):
+    """Wall-clock timestamps can move backwards (NTP or DST); elapsed must not go negative."""
+    heating_control._device_tracker._last_hot_water_on_at = timestamp() + 3600.0
+
+    assert heating_control._elapsed_since_hot_water_on() == 0.0
+
+
+async def test_reset_forgets_the_hot_water_corroboration(heating_control):
+    """A reset must not leave stale corroboration behind for the next episode."""
+    heating_control._dhw_flame_seen_at = timestamp()
+    heating_control._hot_water_episode_started_at = timestamp()
+    heating_control._stale_hot_water_logged = True
+    heating_control._unconfirmed_hot_water_logged = True
+
+    heating_control.reset()
+
+    assert heating_control._dhw_flame_seen_at is None
+    assert heating_control._hot_water_episode_started_at is None
+    assert heating_control._stale_hot_water_logged is False
+    assert heating_control._unconfirmed_hot_water_logged is False
+
+
+async def test_hot_water_without_flame_does_not_suppress_heating(heating_control, coordinator, monkeypatch, caplog):
+    """The DHW bit alone is not a draw.
+
+    The OpenTherm status bit reports "central heating is not being served", so it turns on as a side effect of
+    the PWM OFF phase dropping the CH enable. A boiler that claims hot water without firing must not keep
+    central heating suppressed, and the release must be logged once per episode.
+    """
+    _enable_pwm(heating_control, PWMStatus.ON)
+    burner = _report_hot_water(heating_control, monkeypatch, flame=False)
+    monkeypatch.setattr(type(coordinator), "return_temperature", property(lambda self: 30.0))
+
+    heating_control._device_tracker._last_hot_water_on_at = timestamp() - 60.0
+    heating_control._control_setpoint = MINIMUM_SETPOINT
+
+    with caplog.at_level(logging.DEBUG, logger="custom_components.sat.heating_control"):
+        await heating_control.update(_make_demand(46.2))
+        await heating_control.update(_make_demand(46.2))
+
+    assert burner["flame"] is False
+    assert heating_control.control_setpoint == 30.0 + OFFSET
+
+    releases = [record.getMessage() for record in caplog.records if "not firing" in record.getMessage()]
+    assert len(releases) == 1
+    # Per-cycle noise: the message must stay at DEBUG, not warn the user on every PWM off-phase.
+    assert not [record for record in caplog.records if "not firing" in record.getMessage() and record.levelno >= logging.INFO]
+
+
+async def test_hot_water_suppression_survives_flame_drop_inside_hold_window(heating_control, monkeypatch):
+    """A long draw modulates the burner; the drop must not switch central heating back on within the hold."""
+    _enable_pwm(heating_control, PWMStatus.ON)
+    burner = _report_hot_water(heating_control, monkeypatch, flame=True)
+
+    heating_control._device_tracker._last_hot_water_on_at = timestamp() - 30.0
+
+    await heating_control.update(_make_demand(46.2))
+    assert heating_control.control_setpoint == MINIMUM_SETPOINT
+    assert heating_control._dhw_flame_seen_at is not None  # the corroboration is remembered for the hold
+
+    burner["flame"] = False
+    await heating_control.update(_make_demand(46.2))
+
+    assert heating_control.control_setpoint == MINIMUM_SETPOINT
+
+
+async def test_hot_water_suppression_released_after_flame_hold_expires(heating_control, coordinator, monkeypatch, caplog):
+    _enable_pwm(heating_control, PWMStatus.ON)
+    burner = _report_hot_water(heating_control, monkeypatch, flame=True)
+    monkeypatch.setattr(type(coordinator), "return_temperature", property(lambda self: 30.0))
+
+    heating_control._device_tracker._last_hot_water_on_at = timestamp() - 120.0
+
+    await heating_control.update(_make_demand(46.2))
+    assert heating_control.control_setpoint == MINIMUM_SETPOINT
+
+    burner["flame"] = False
+    heating_control._dhw_flame_seen_at = timestamp() - (DHW_FLAME_HOLD_SECONDS + 1.0)
+
+    with caplog.at_level(logging.DEBUG, logger="custom_components.sat.heating_control"):
+        await heating_control.update(_make_demand(46.2))
+
+    assert heating_control.control_setpoint == 30.0 + OFFSET
+    assert any("not firing" in record.getMessage() for record in caplog.records)
+
+
+async def test_hot_water_ignition_grace_still_suppresses_before_the_burner_lights(heating_control, monkeypatch):
+    _enable_pwm(heating_control, PWMStatus.ON)
+    _report_hot_water(heating_control, monkeypatch, flame=False)
+
+    heating_control._device_tracker._last_hot_water_on_at = timestamp() - (DHW_IGNITION_GRACE_SECONDS - 5.0)
+    heating_control._control_setpoint = 46.2
+
+    await heating_control.update(_make_demand(46.2))
+
+    assert heating_control.control_setpoint == MINIMUM_SETPOINT
+    assert heating_control._unconfirmed_hot_water_logged is False  # still inside the grace, nothing released
+
+
+async def test_fresh_flame_provoked_by_the_released_setpoint_does_not_latch(heating_control, coordinator, monkeypatch):
+    """A CH relight provoked by our own setpoint drop must not be counted as a draw.
+
+    Sequence behind the loop this guards against: the spurious DHW bit outlives the ignition grace, the
+    predicate releases and publishes the heating setpoint, and the burner relights for central heating while
+    the bit is still set. That flame is seconds old, so it must neither confirm the report nor arm the hold.
+    """
+    _enable_pwm(heating_control, PWMStatus.ON)
+    burner = _report_hot_water(heating_control, monkeypatch, flame=True, persisted=False)
+    monkeypatch.setattr(type(coordinator), "return_temperature", property(lambda self: 30.0))
+
+    heating_control._device_tracker._last_hot_water_on_at = timestamp() - 60.0
+
+    await heating_control.update(_make_demand(46.2))
+
+    assert burner["flame"] is True
+    assert heating_control.hot_water_suppresses_heating is False
+    assert heating_control._dhw_flame_seen_at is None
+    assert heating_control.control_setpoint == 30.0 + OFFSET
+
+
+async def test_hot_water_cap_still_releases_heating_with_a_burning_boiler(heating_control, coordinator, monkeypatch, caplog):
+    """The 1800 s cap stays a backstop: it releases heating even while the flame corroborates the report."""
+    _enable_pwm(heating_control, PWMStatus.ON)
+    _report_hot_water(heating_control, monkeypatch, flame=True)
+    monkeypatch.setattr(type(coordinator), "return_temperature", property(lambda self: 30.0))
+
+    heating_control._device_tracker._last_hot_water_on_at = timestamp() - (DHW_SUPPRESSION_MAX_SECONDS + 1.0)
+
+    with caplog.at_level(logging.DEBUG, logger="custom_components.sat.heating_control"):
+        await heating_control.update(_make_demand(46.2))
+
+    assert heating_control.control_setpoint == 30.0 + OFFSET
+    assert any("treating as stale" in record.getMessage() for record in caplog.records)
+
+
+async def test_hot_water_flame_memory_is_cleared_between_episodes(heating_control, monkeypatch):
+    """A new episode must not inherit the hold-off recorded for the previous draw."""
+    _enable_pwm(heating_control, PWMStatus.ON)
+    burner = _report_hot_water(heating_control, monkeypatch, flame=True)
+
+    heating_control._device_tracker._last_hot_water_on_at = timestamp() - 30.0
+    await heating_control.update(_make_demand(46.2))
+
+    monkeypatch.setattr(type(heating_control._coordinator), "hot_water_active", property(lambda self: False))
+    burner["flame"] = False
+    await heating_control.update(_make_demand(46.2))
+
+    assert heating_control._dhw_flame_seen_at is None
+
+
+async def test_hot_water_flame_memory_cleared_when_episode_ends_while_heating_off(heating_control, coordinator, monkeypatch):
+    """An episode ending while heating is off must not leak the flame memory into the next episode.
+
+    The reset cannot live in the hot-water branch of _compute_pwm_control_setpoint, because that branch is only
+    reached with heating running under PWM. Here the episode ends with heating off, so no demand is pushed at
+    all. Without a reset on the always-run path, the next unlit episode inherits a flame timestamp from the
+    previous draw and stays suppressed for the whole flame hold instead of releasing after its own grace.
+    """
+    _enable_pwm(heating_control, PWMStatus.ON)
+    report = {"hot_water": True}
+    burner = _report_hot_water(heating_control, monkeypatch, flame=True)
+    # Patch after the helper, which sets hot_water_active to a constant True and would otherwise win.
+    monkeypatch.setattr(type(coordinator), "hot_water_active", property(lambda self: report["hot_water"]))
+    monkeypatch.setattr(type(coordinator), "return_temperature", property(lambda self: 30.0))
+
+    heating_control._device_tracker._last_hot_water_on_at = timestamp() - 30.0
+    await heating_control.update(_make_demand(46.2))
+
+    assert heating_control.control_setpoint == MINIMUM_SETPOINT
+    assert heating_control._dhw_flame_seen_at is not None
+
+    # The report ends while heating is off: no demand is pushed, only the always-run coordinator path ticks.
+    report["hot_water"] = False
+    burner["flame"] = False
+    heating_control._handle_coordinator_update()
+
+    assert heating_control._dhw_flame_seen_at is None
+    assert heating_control._unconfirmed_hot_water_logged is False
+    assert heating_control._stale_hot_water_logged is False
+
+    # A new unlit episode must release after its own ignition grace, not the previous hold window.
+    report["hot_water"] = True
+    heating_control._device_tracker._last_hot_water_on_at = timestamp() - (DHW_IGNITION_GRACE_SECONDS + 5.0)
+
+    await heating_control.update(_make_demand(46.2))
+
+    assert heating_control.control_setpoint == 30.0 + OFFSET
+
+
+async def test_hot_water_flame_observed_while_heating_off_survives_into_pwm(heating_control, coordinator, monkeypatch):
+    """A draw that burns while heating is off must leave corroboration for the hold window.
+
+    The flame timestamp used to be recorded only inside _compute_pwm_control_setpoint, which does not run while
+    heating is off. A genuine draw burning during that time then left no corroboration, and when PWM heating
+    resumed during a burner pause past the ignition grace the heating restarted although the flame had been
+    seen seconds earlier.
+    """
+    _enable_pwm(heating_control, PWMStatus.ON)
+    report = {"hot_water": True}
+    burner = _report_hot_water(heating_control, monkeypatch, flame=True)
+    monkeypatch.setattr(type(coordinator), "hot_water_active", property(lambda self: report["hot_water"]))
+    monkeypatch.setattr(type(coordinator), "return_temperature", property(lambda self: 30.0))
+
+    # The draw burns while no demand is pushed, i.e. only the always-run coordinator path ticks.
+    heating_control._device_tracker._last_hot_water_on_at = timestamp() - 30.0
+    heating_control._handle_coordinator_update()
+
+    assert heating_control._dhw_flame_seen_at is not None
+
+    # PWM heating resumes during a burner pause, past the ignition grace: the hold must still suppress.
+    burner["flame"] = False
+    heating_control._device_tracker._last_hot_water_on_at = timestamp() - (DHW_IGNITION_GRACE_SECONDS + 5.0)
+
+    await heating_control.update(_make_demand(46.2))
+
+    assert heating_control.control_setpoint == MINIMUM_SETPOINT
+
+
+async def test_hot_water_without_flame_telemetry_keeps_capped_suppression(heating_control, coordinator, monkeypatch):
+    """A device that cannot report the flame must not be read as "the burner is off".
+
+    Backends such as ESPHome return None for a configured but missing flame sensor and collapse that to False.
+    Treating that as proof of no draw would release central heating after the ignition grace during a genuine
+    hot-water episode. Without corroboration the previous capped behaviour has to stand.
+    """
+    _enable_pwm(heating_control, PWMStatus.ON)
+    burner = _report_hot_water(heating_control, monkeypatch, flame=False)
+    monkeypatch.setattr(type(coordinator), "supports_flame_detection", property(lambda self: False))
+
+    heating_control._device_tracker._last_hot_water_on_at = timestamp() - 60.0
+    heating_control._control_setpoint = 46.2
+
+    await heating_control.update(_make_demand(46.2))
+
+    assert burner["flame"] is False
+    assert heating_control.control_setpoint == MINIMUM_SETPOINT
+
+
+async def test_hot_water_without_flame_telemetry_is_still_capped(heating_control, coordinator, monkeypatch):
+    """Capped has to mean the cap fires: an uncorroborated backend still releases at the backstop."""
+    _enable_pwm(heating_control, PWMStatus.ON)
+    _report_hot_water(heating_control, monkeypatch, flame=False)
+    monkeypatch.setattr(type(coordinator), "supports_flame_detection", property(lambda self: False))
+    monkeypatch.setattr(type(coordinator), "return_temperature", property(lambda self: 30.0))
+
+    heating_control._device_tracker._last_hot_water_on_at = timestamp() - (DHW_SUPPRESSION_MAX_SECONDS + 1.0)
+
+    await heating_control.update(_make_demand(46.2))
+
+    assert heating_control.control_setpoint == 30.0 + OFFSET
+
+
+async def test_uncorroborated_hot_water_does_not_command_maximum_modulation(heating_control, coordinator, monkeypatch):
+    """The reported state stays raw, but the command must follow the corroborated predicate.
+
+    The DHW bit is asserted by our own PWM off-phase, so commanding maximum modulation off it while the
+    entity reports that no draw is happening both fights the boiler and contradicts the reported reason.
+    """
+    _enable_pwm(heating_control, PWMStatus.ON)
+    _report_hot_water(heating_control, monkeypatch, flame=False)
+    coordinator.config.supports_relative_modulation_management = True
+
+    heating_control._device_tracker._last_hot_water_on_at = timestamp() - 60.0
+
+    sent = []
+    original = coordinator.async_set_control_max_relative_modulation
+
+    async def _record(value):
+        sent.append(value)
+        await original(value)
+
+    monkeypatch.setattr(coordinator, "async_set_control_max_relative_modulation", _record)
+
+    await heating_control.update(_make_demand(46.2))
+
+    assert heating_control.relative_modulation_state is RelativeModulationState.HOT_WATER
+    assert heating_control.hot_water_suppresses_heating is False
+    assert sent[-1] == MINIMUM_RELATIVE_MODULATION
+
+
+async def test_hot_water_episode_does_not_hold_the_boiler_while_released(heating_control, coordinator, monkeypatch):
+    """Episode tracking must not command the boiler, so a release cannot be held by a reported draw.
+
+    The tracking path runs on every coordinator update, including while the boiler is released. If it
+    commanded, a reported draw would take control back from the release on the next tick.
+    """
+    _enable_pwm(heating_control, PWMStatus.ON)
+    _report_hot_water(heating_control, monkeypatch, flame=True)
+
+    setpoint_command = AsyncMock()
+    heater_command = AsyncMock()
+    modulation_command = AsyncMock()
+    monkeypatch.setattr(coordinator, "async_set_control_setpoint", setpoint_command)
+    monkeypatch.setattr(coordinator, "async_set_heater_state", heater_command)
+    monkeypatch.setattr(coordinator, "async_set_control_max_relative_modulation", modulation_command)
+
+    heating_control._device_tracker._last_hot_water_on_at = timestamp() - 30.0
+    heating_control._handle_coordinator_update()
+
+    setpoint_command.assert_not_awaited()
+    heater_command.assert_not_awaited()
+    modulation_command.assert_not_awaited()
+
+    await heating_control.async_release()
+
+    assert coordinator.released is True
+    assert coordinator.active is False
+

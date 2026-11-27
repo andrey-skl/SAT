@@ -86,10 +86,13 @@ async def test_nothing_is_sent_while_waiting_without_an_earlier_demand(hass, dem
 
 
 @MAIN_ROOM
-async def test_boiler_is_released_and_the_pid_reset_once_after_the_grace_period(hass, demand_control, commands, monkeypatch, domains, data, options, config):
+async def test_boiler_is_released_and_the_pid_reset_once_after_the_grace_period(hass, demand_control, heating_control, commands, monkeypatch, domains, data, options, config):
     update, release = commands
     resets = []
+    heating_resets = []
     monkeypatch.setattr(demand_control, "reset_control_state", lambda: resets.append(True))
+    # A release must also clear the heating control's hot-water corroboration, not just the PIDs.
+    monkeypatch.setattr(heating_control, "reset", lambda: heating_resets.append(True))
     hass.states.async_set(OUTSIDE, "unavailable")
 
     await _run(demand_control)
@@ -99,6 +102,7 @@ async def test_boiler_is_released_and_the_pid_reset_once_after_the_grace_period(
     update.assert_not_awaited()
     assert release.await_count == 2
     assert resets == [True]
+    assert heating_resets == [True]
 
 
 @MAIN_ROOM

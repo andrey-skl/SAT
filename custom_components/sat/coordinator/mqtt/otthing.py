@@ -73,6 +73,11 @@ class SatOtthingMqttCoordinator(SatMqttCoordinator):
         return bool(self._slave_status().get(DATA_FLAME_ACTIVE))
 
     @property
+    def supports_flame_detection(self) -> bool:
+        """A key present with no value is no telemetry either, so require an actual reading."""
+        return self._slave_status().get(DATA_FLAME_ACTIVE) is not None
+
+    @property
     def hot_water_active(self) -> bool:
         return bool(self._slave_status().get(DATA_DHW_ACTIVE))
 
