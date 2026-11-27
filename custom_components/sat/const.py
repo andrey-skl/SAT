@@ -21,6 +21,8 @@ DHW_OVERSHOOT_GUARD_SECONDS = 300.0
 # bit reports "central heating is not being served", so it also turns on as a side effect of our own PWM OFF
 # phase, which made a reported draw suppress the heating that would have cleared it. A reported draw therefore
 # needs the flame to corroborate it, with a short grace so a draw is not missed before the burner lights.
+# Measured on the captured OTGW log: on the one genuine draw (16:53:24, the only non-zero relative modulation,
+# 0->34->54->44->0 over 71 s) the burner was already lit in the first 2 s sample, so ignition latency is ~2 s.
 DHW_IGNITION_GRACE_SECONDS = 15.0
 # Once the flame is seen during a hot-water episode, keep suppressing this long after it drops, so burner
 # modulation or cycling during a long draw cannot flicker central heating back on.

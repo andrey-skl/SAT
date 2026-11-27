@@ -681,6 +681,8 @@ class SatDemandControl:
                     self.hvac_mode == HVACMode.HEAT
                     and self.valves_open
                     and not self._solar_gain_snapshot.active
+                    # Deliberately the raw report: eligibility is conservative, and a spurious blip only
+                    # withholds these observations briefly rather than feeding a real draw to the monitors.
                     and not self._coordinator.hot_water_active
             ),
             heating=self.hvac_action == HVACAction.HEATING,
@@ -736,6 +738,7 @@ class SatDemandControl:
             return None
 
         if self._solar_gain_snapshot.active or self._coordinator.hot_water_active:
+            # The raw report is deliberate here too: a spurious blip costs one curve-advice sample.
             return None
 
         if (room := self._driving_room(now, temperature_state)) is None:
@@ -986,6 +989,7 @@ class SatDemandControl:
         if state.just_released:
             self._held_demand = None
             self.reset_control_state()
+            self._heating_control.reset()
             _LOGGER.warning("Released the boiler of %s because the %s has been missing for too long.", self._id, state.missing)
 
         await self._heating_control.async_release()

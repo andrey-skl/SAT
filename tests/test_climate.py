@@ -13,6 +13,7 @@ from pytest_homeassistant_custom_component.common import async_mock_service
 from custom_components.sat.entry_data import SatConfig
 from custom_components.sat.const import (
     COLD_SETPOINT,
+    DHW_IGNITION_GRACE_SECONDS,
     HEATING_CONTROL_SCHEDULE_TIMEOUT_SECONDS,
     CONF_HEATING_CURVE_COEFFICIENT,
     CONF_HEATING_MODE,
@@ -664,6 +665,11 @@ async def test_heating_blocked_by_hot_water_needs_burner_corroboration(monkeypat
 
     monkeypatch.setattr(type(coordinator), "flame_active", property(lambda self: True))
 
+    # A flame that has only just lit proves nothing: it could be a CH relight provoked by our own setpoint.
+    heating_control._device_tracker._last_flame_on_at = timestamp()
+    assert demand_control.heating_blocked_by is None
+
+    heating_control._device_tracker._last_flame_on_at = timestamp() - (DHW_IGNITION_GRACE_SECONDS + 1.0)
     assert demand_control.heating_blocked_by is HeatingBlock.HOT_WATER
 
 
