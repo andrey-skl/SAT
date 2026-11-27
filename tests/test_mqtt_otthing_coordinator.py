@@ -87,6 +87,10 @@ def test_supports_flame_detection(coordinator):
     """Only a real flame reading may corroborate hot water; an absent key must not read as "burner off"."""
     assert coordinator.supports_flame_detection is False
 
+    coordinator.async_set_updated_data({"slave": {"status": {"flame": None}}})
+
+    assert coordinator.supports_flame_detection is False  # present but without a value
+
     _load_state(coordinator)
 
     assert coordinator.supports_flame_detection is True

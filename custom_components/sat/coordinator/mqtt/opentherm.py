@@ -76,7 +76,14 @@ class SatOpenThermMqttCoordinator(SatMqttCoordinator):
 
     @property
     def supports_flame_detection(self) -> bool:
-        return DATA_FLAME_ACTIVE in self.data or self.data.get(DATA_FLAME_ACTIVE) is not None
+        """A key present with no value is no telemetry either, so require an actual reading.
+
+        Raw MQTT payloads can arrive empty, and a present-but-empty key reads as "burner off" once
+        ``flame_active`` collapses it to False. Test the value, not the key.
+        """
+        value = self.data.get(DATA_FLAME_ACTIVE)
+
+        return value is not None and value != ""
 
     @property
     def hot_water_active(self) -> bool:
