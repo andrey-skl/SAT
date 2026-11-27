@@ -305,6 +305,19 @@ async def test_read_binary_sensor_values(esphome_coordinator):
 
 
 @pytest.mark.asyncio
+async def test_supports_flame_detection_requires_a_reading(esphome_coordinator, runtime_data):
+    """A configured but missing flame sensor collapses to False, so it must not corroborate hot water."""
+    esphome_coordinator._keys = KEYS
+
+    assert esphome_coordinator.supports_flame_detection is True
+
+    runtime_data.state[BinarySensorState].pop(10)  # the flame_on sensor stops reporting
+
+    assert esphome_coordinator.flame_active is False
+    assert esphome_coordinator.supports_flame_detection is False
+
+
+@pytest.mark.asyncio
 async def test_read_number_values(esphome_coordinator):
     esphome_coordinator._keys = KEYS
 

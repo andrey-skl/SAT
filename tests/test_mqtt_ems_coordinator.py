@@ -63,6 +63,15 @@ def test_flame_active(coordinator):
     assert coordinator.flame_active is True
 
 
+def test_supports_flame_detection(coordinator):
+    """Only a real flame reading may corroborate hot water; an absent key must not read as "burner off"."""
+    assert coordinator.supports_flame_detection is False
+
+    coordinator.data.update({DATA_FLAME_ACTIVE: "off"})
+
+    assert coordinator.supports_flame_detection is True
+
+
 def test_hot_water_active(coordinator):
     coordinator.data.update({DATA_DHW_ENABLE: "on"})
     assert coordinator.hot_water_active is True

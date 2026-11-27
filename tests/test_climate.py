@@ -645,6 +645,28 @@ async def test_heating_blocked_by_names_the_reason(monkeypatch, demand_control, 
     assert demand_control.heating_blocked_by is HeatingBlock.INPUTS_MISSING
 
 
+async def test_heating_blocked_by_hot_water_needs_burner_corroboration(monkeypatch, demand_control, coordinator):
+    """The DHW status bit alone must not be shown as the block while heating is running.
+
+    The bit reports "central heating is not being served", so it also turns on as a side effect of the PWM OFF
+    phase. The attribute has to follow the same corroboration rule as the setpoint, otherwise it claims hot
+    water while the control loop is heating.
+    """
+    heating_control = demand_control._heating_control
+    demand_control._hvac_mode = HVACMode.HEAT
+
+    monkeypatch.setattr(type(coordinator), "hot_water_active", property(lambda self: True))
+    monkeypatch.setattr(type(coordinator), "flame_active", property(lambda self: False))
+    monkeypatch.setattr(type(coordinator), "supports_flame_detection", property(lambda self: True))
+    heating_control._device_tracker._last_hot_water_on_at = timestamp() - 60.0
+
+    assert demand_control.heating_blocked_by is None
+
+    monkeypatch.setattr(type(coordinator), "flame_active", property(lambda self: True))
+
+    assert demand_control.heating_blocked_by is HeatingBlock.HOT_WATER
+
+
 async def test_frost_protection_is_not_blocked_by_being_off(demand_control):
     demand_control._hvac_mode = HVACMode.OFF
     demand_control._frost_protection_active = True
