@@ -208,8 +208,7 @@
           "target_temperature_step": "Paso de Temperatura Objetivo",
           "thermal_comfort": "Confort Térmico",
           "flame_off_setpoint_offset_celsius": "Desfase de consigna con llama apagada",
-          "modulation_suppression_delay_seconds": "Retardo de supresión de modulación",
-          "flame_off_setpoint_source": "Fuente de la consigna con llama apagada"
+          "modulation_suppression_delay_seconds": "Retardo de supresión de modulación"
         },
         "data_description": {
           "climate_valve_offset": "Diferencia de temperatura (objetivo vs actual) para considerar una válvula abierta.",
@@ -226,15 +225,14 @@
           "simulation": "Activar modo de simulación (no se envían comandos reales a la caldera).",
           "error_monitoring": "Envía errores relacionados con SAT a Sentry para ayudar a diagnosticar problemas.",
           "force_pulse_width_modulation": "Forzar la Modulación de Ancho de Pulso aunque haya control de modulación disponible (útil para control por relé).",
-          "flame_off_setpoint_offset_celsius": "Con la llama apagada, mantiene un setpoint temporal en la temperatura de la fuente seleccionada + offset (solo Modulación de Ancho de Pulso).",
+          "flame_off_setpoint_offset_celsius": "Con la llama apagada, mantiene un setpoint temporal en retorno + offset (solo Modulación de Ancho de Pulso).",
           "modulation_suppression_delay_seconds": "Tiempo tras encender la llama antes de aplicar la supresión (solo Modulación de Ancho de Pulso).",
           "modulation_suppression_offset_celsius": "Cuánto se reduce el setpoint de impulsión durante la supresión (solo Modulación de Ancho de Pulso).",
           "flow_setpoint_offset_celsius": "Separación mínima por debajo de la temperatura de la caldera al limitar el setpoint (modo continuo).",
           "minimum_boiler_pressure": "Umbral inferior de presión para la detección del estado (bar).",
           "maximum_boiler_pressure": "Umbral superior de presión para la detección del estado (bar).",
           "maximum_pressure_drop_rate": "Caída de presión máxima permitida antes de señalar un problema (bar/h).",
-          "pressure_max_value_age": "Edad máxima de una lectura de presión antes de señalar un problema.",
-          "flame_off_setpoint_source": "Base de la consigna temporal mientras la fase ON de la Modulación por Ancho de Pulso espera la llama. Elija la temperatura de impulsión si su caldera no informa la temperatura de retorno."
+          "pressure_max_value_age": "Edad máxima de una lectura de presión antes de señalar un problema."
         },
         "title": "Avanzadas"
       },
@@ -291,12 +289,14 @@
           "sync_climates_with_mode": "Sincronizar climas con el modo",
           "sensor_max_value_age": "Edad máxima del valor del sensor de temperatura",
           "window_minimum_open_time": "Tiempo mínimo de apertura de ventana",
+          "window_minimum_closed_time": "Tiempo mínimo de cierre de ventana",
           "frost_protection_temperature": "Temperatura de protección antiheladas"
         },
         "data_description": {
           "cycles_per_hour": "La cantidad máxima de ciclos por hora.",
           "sensor_max_value_age": "La edad máxima del valor del sensor de temperatura antes de considerarlo como obsoleto.",
           "window_minimum_open_time": "El tiempo mínimo que una ventana debe estar abierta antes de que el sistema reaccione.",
+          "window_minimum_closed_time": "El tiempo mínimo que todas las ventanas deben estar cerradas antes de reanudar la calefacción.",
           "sync_climates_with_mode": "También aplica el modo HVAC a los climas de las habitaciones cuando se cambia aquí.",
           "frost_protection_temperature": "Seguir calentando cuando la habitación baje de esta temperatura, incluso con el termostato apagado. Poner a 0 para desactivar."
         },
@@ -373,6 +373,30 @@
     "room_fault": {
       "title": "{room} informa de un problema de válvula",
       "description": "El dispositivo de {room} de {name} informa de una alarma de válvula. Compruebe su instalación, su calibración y el enlace con cualquier sensor de temperatura externo."
+    },
+    "control_loop_stalled": {
+      "title": "El control de calefacción no responde",
+      "description": "SAT no ha completado ningún ciclo de control para {name} en 15 minutos, por lo que la caldera puede no seguir la demanda. Compruebe la conexión con la caldera y el registro y, después, recargue la integración. Este aviso desaparece cuando se reanuda el control."
+    },
+    "missing_inside_temperature": {
+      "title": "Falta la temperatura interior",
+      "description": "SAT no tiene temperatura interior para {name} desde hace más de 10 minutos y ha liberado la caldera: un termostato en una pasarela OpenTherm toma el control; de lo contrario, la calefacción queda apagada. Compruebe el sensor interior. SAT recupera el control cuando vuelva."
+    },
+    "missing_outside_temperature": {
+      "title": "Falta la temperatura exterior",
+      "description": "SAT no tiene temperatura exterior para {name} desde hace más de 10 minutos y ha liberado la caldera: un termostato en una pasarela OpenTherm toma el control; de lo contrario, la calefacción queda apagada. Compruebe el sensor exterior o la entidad meteorológica. SAT recupera el control cuando vuelva."
+    },
+    "missing_room_temperatures": {
+      "title": "No se puede acceder a ninguna habitación",
+      "description": "SAT no puede leer ninguna habitación de {name} desde hace más de 10 minutos y ha liberado la caldera: un termostato en una pasarela OpenTherm toma el control; de lo contrario, la calefacción queda apagada. Compruebe los termostatos de las habitaciones. SAT recupera el control cuando vuelva alguno."
+    },
+    "running_on_fallback_sensor": {
+      "title": "Calefacción con una temperatura de respaldo",
+      "description": "Se ha perdido el sensor interior de {name}, por lo que SAT regula con {source} y mientras tanto no aprende nada. Los termostatos de radiador miden de más, así que la habitación puede quedar por debajo del objetivo. Compruebe el sensor. SAT vuelve a él por sí solo."
+    },
+    "missing_boiler": {
+      "title": "No se puede acceder a la pasarela de la caldera",
+      "description": "SAT no recibe nada de la pasarela de la caldera de {name} desde hace más de 10 minutos con la calefacción activa, así que ha dejado de controlarla e intenta liberar la caldera. Compruebe la pasarela y el broker MQTT. SAT recupera el control cuando vuelva la pasarela."
     }
   },
   "entity": {
@@ -407,12 +431,6 @@
         "sleep": "Dormir",
         "away": "Ausente",
         "activity": "Actividad"
-      }
-    },
-    "flame_off_setpoint_source": {
-      "options": {
-        "return_temperature": "Temperatura de retorno + desplazamiento",
-        "flow_temperature": "Temperatura de impulsión + desplazamiento"
       }
     }
   }

@@ -20,7 +20,7 @@ DATA_BOILER_CAPACITY = "max_capacity"
 DATA_BOILER_TEMPERATURE = "flow_t"
 DATA_CENTRAL_HEATING = "ch_mode"
 DATA_CONTROL_SETPOINT = "ch_set_t"
-DATA_DHW_ENABLE = "dhw_mode"
+DATA_DHW_ACTIVE = "dhw_mode"
 DATA_DHW_SETPOINT = "dhw_set_t"
 DATA_DHW_SETPOINT_MAXIMUM = "dhwMax"
 DATA_DHW_SETPOINT_MINIMUM = "dhwMin"
@@ -35,7 +35,6 @@ DATA_STATE = "state"
 DATA_STATUS = "status"
 DATA_THERMOSTAT = "thermostat"
 DATA_THERMOSTAT_CH_ENABLE = "ch_enable"
-DATA_THERMOSTAT_DHW_ENABLE = "dhw_enable"
 TOPIC_STATE = "state"
 
 
@@ -75,14 +74,12 @@ class SatOtthingMqttCoordinator(SatMqttCoordinator):
 
     @property
     def supports_flame_detection(self) -> bool:
-        return DATA_FLAME_ACTIVE in self._slave_status()
+        """A key present with no value is no telemetry either, so require an actual reading."""
+        return self._slave_status().get(DATA_FLAME_ACTIVE) is not None
 
     @property
     def hot_water_active(self) -> bool:
-        return bool(
-            self._thermostat_status().get(DATA_THERMOSTAT_DHW_ENABLE)
-            or self._slave_status().get(DATA_DHW_ENABLE)
-        )
+        return bool(self._slave_status().get(DATA_DHW_ACTIVE))
 
     @property
     def setpoint(self) -> Optional[float]:
@@ -162,7 +159,6 @@ class SatOtthingMqttCoordinator(SatMqttCoordinator):
         pass
 
     async def async_set_control_setpoint(self, value: float) -> None:
-        await self._publish_command(COMMAND_PAYLOAD_HEAT, suffix=COMMAND_SUFFIX_CH_MODE)
         await self._publish_command(self._format_temperature(value), suffix=COMMAND_SUFFIX_CH_SETPOINT)
 
         await super().async_set_control_setpoint(value)

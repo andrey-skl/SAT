@@ -83,10 +83,33 @@ def test_flame_active(coordinator):
     assert coordinator.flame_active is True
 
 
+def test_supports_flame_detection(coordinator):
+    """Only a real flame reading may corroborate hot water; an absent key must not read as "burner off"."""
+    assert coordinator.supports_flame_detection is False
+
+    coordinator.async_set_updated_data({"slave": {"status": {"flame": None}}})
+
+    assert coordinator.supports_flame_detection is False  # present but without a value
+
+    _load_state(coordinator)
+
+    assert coordinator.supports_flame_detection is True
+
+
 def test_hot_water_active(coordinator):
     _load_state(coordinator)
     # thermostat.status.dhw_enable is False, slave.status.dhw_mode is False
     assert coordinator.hot_water_active is False
+
+
+@pytest.mark.parametrize(("boiler_heats_water", "active"), [(False, False), (True, True)])
+def test_enabled_hot_water_is_only_active_while_the_boiler_heats_it(coordinator, boiler_heats_water, active):
+    coordinator.async_set_updated_data({
+        "slave": {"status": {"dhw_mode": boiler_heats_water}},
+        "thermostat": {"status": {"dhw_enable": True}},
+    })
+
+    assert coordinator.hot_water_active is active
 
 
 def test_setpoint(coordinator):
@@ -163,9 +186,7 @@ async def test_set_control_setpoint(coordinator, monkeypatch):
 
     await coordinator.async_set_control_setpoint(42.5)
 
-    assert len(calls) == 2
-    assert calls[0] == ((COMMAND_PAYLOAD_HEAT,), {"suffix": COMMAND_SUFFIX_CH_MODE})
-    assert calls[1] == (("42.5",), {"suffix": COMMAND_SUFFIX_CH_SETPOINT})
+    assert calls == [(("42.5",), {"suffix": COMMAND_SUFFIX_CH_SETPOINT})]
 
 
 @pytest.mark.asyncio
@@ -226,3 +247,20 @@ def test_normalize_dict_payload_adds_defaults(coordinator):
 def test_normalize_scalar_payload(coordinator):
     result = coordinator._normalize_payload("key", "value")
     assert result == {"key": "value"}
+
+
+async def test_release_ends_with_central_heating_off(coordinator, monkeypatch):
+    calls = []
+    monkeypatch.setattr(coordinator, "_publish_command", AsyncMock(side_effect=lambda *a, **kw: calls.append((a, kw))))
+
+    await coordinator.async_release()
+
+    assert calls[-1] == (("off",), {"suffix": COMMAND_SUFFIX_CH_MODE})
+
+
+async def test_nothing_is_restored_from_the_store(coordinator):
+    coordinator._store.async_load = AsyncMock(return_value={"burngas": "on", "slave": {"status": {"flame": True}}})
+
+    await coordinator.async_setup()
+
+    assert dict(coordinator.data) == {}

@@ -21,6 +21,8 @@ DHW_OVERSHOOT_GUARD_SECONDS = 300.0
 # bit reports "central heating is not being served", so it also turns on as a side effect of our own PWM OFF
 # phase, which made a reported draw suppress the heating that would have cleared it. A reported draw therefore
 # needs the flame to corroborate it, with a short grace so a draw is not missed before the burner lights.
+# Measured on the captured OTGW log: on the one genuine draw (16:53:24, the only non-zero relative modulation,
+# 0->34->54->44->0 over 71 s) the burner was already lit in the first 2 s sample, so ignition latency is ~2 s.
 DHW_IGNITION_GRACE_SECONDS = 15.0
 # Once the flame is seen during a hot-water episode, keep suppressing this long after it drops, so burner
 # modulation or cycling during a long draw cannot flicker central heating back on.
@@ -39,6 +41,10 @@ SOLAR_GAIN_RISE_WINDOW_SECONDS = 1200.0
 SOLAR_GAIN_RISE_MINIMUM_SPAN_SECONDS = 900.0
 HEATING_CURVE_SETTLE_SECONDS = 1800.0
 HEATING_CONTROL_SCHEDULE_TIMEOUT_SECONDS = 10.0
+COMMAND_TIMEOUT_SECONDS = 30.0
+CONTROL_LOOP_STALL_SECONDS = 900.0
+FAIL_SAFE_GRACE_SECONDS = 600.0
+INSIDE_FALLBACK_DELAY_SECONDS = 120.0
 FROST_PROTECTION_HYSTERESIS_CELSIUS = 1.0
 FROST_PROTECTION_SETPOINT = 30.0
 
@@ -73,6 +79,7 @@ CONF_RADIATORS = "main_climates"
 CONF_WINDOW_SENSORS = "window_sensors"
 CONF_PUSH_SETPOINT_TO_THERMOSTAT = "push_setpoint_to_thermostat"
 CONF_WINDOW_MINIMUM_OPEN_TIME = "window_minimum_open_time"
+CONF_WINDOW_MINIMUM_CLOSED_TIME = "window_minimum_closed_time"
 CONF_THERMAL_COMFORT = "thermal_comfort"
 CONF_SOLAR_GAIN_COMPENSATION = "solar_gain_compensation"
 CONF_SOLAR_GAIN_MIN_ELEVATION = "solar_gain_min_elevation"
@@ -103,10 +110,6 @@ CONF_OUTSIDE_SENSOR_ENTITY_ID = "outside_sensor_entity_id"
 CONF_HUMIDITY_SENSOR_ENTITY_ID = "humidity_sensor_entity_id"
 CONF_WIND_SENSOR_ENTITY_ID = "wind_sensor_entity_id"
 CONF_FLAME_OFF_SETPOINT_OFFSET_CELSIUS = "flame_off_setpoint_offset_celsius"
-CONF_FLAME_OFF_SETPOINT_SOURCE = "flame_off_setpoint_source"
-FLAME_OFF_SETPOINT_SOURCE_RETURN = "return_temperature"
-FLAME_OFF_SETPOINT_SOURCE_FLOW = "flow_temperature"
-FLAME_OFF_SETPOINT_SOURCES = [FLAME_OFF_SETPOINT_SOURCE_RETURN, FLAME_OFF_SETPOINT_SOURCE_FLOW]
 CONF_MODULATION_SUPPRESSION_DELAY_SECONDS = "modulation_suppression_delay_seconds"
 CONF_MODULATION_SUPPRESSION_OFFSET_CELSIUS = "modulation_suppression_offset_celsius"
 CONF_FLOW_SETPOINT_OFFSET_CELSIUS = "flow_setpoint_offset_celsius"
@@ -173,7 +176,6 @@ OPTIONS_DEFAULTS = {
     CONF_FORCE_PULSE_WIDTH_MODULATION: False,
 
     CONF_FLAME_OFF_SETPOINT_OFFSET_CELSIUS: 18.0,
-    CONF_FLAME_OFF_SETPOINT_SOURCE: FLAME_OFF_SETPOINT_SOURCE_RETURN,
     CONF_MODULATION_SUPPRESSION_DELAY_SECONDS: 20,
     CONF_MODULATION_SUPPRESSION_OFFSET_CELSIUS: 1.0,
     CONF_FLOW_SETPOINT_OFFSET_CELSIUS: 2.0,
@@ -195,6 +197,7 @@ OPTIONS_DEFAULTS = {
     CONF_SENSOR_MAX_VALUE_AGE: "06:00:00",
     CONF_SIMULATED_WARMING_UP: "00:00:15",
     CONF_WINDOW_MINIMUM_OPEN_TIME: "00:00:15",
+    CONF_WINDOW_MINIMUM_CLOSED_TIME: "00:00:00",
     CONF_FROST_PROTECTION_TEMPERATURE: 6.0,
 
     # Preset temperatures.

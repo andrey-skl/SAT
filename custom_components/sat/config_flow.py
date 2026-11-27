@@ -803,6 +803,7 @@ class SatOptionsFlowHandler(config_entries.OptionsFlow):
         schema_entries.append((vol.Required(CONF_SENSOR_MAX_VALUE_AGE, default=options[CONF_SENSOR_MAX_VALUE_AGE]), selector.TimeSelector()))
 
         schema_entries.append((vol.Required(CONF_WINDOW_MINIMUM_OPEN_TIME, default=options[CONF_WINDOW_MINIMUM_OPEN_TIME]), selector.TimeSelector()))
+        schema_entries.append((vol.Required(CONF_WINDOW_MINIMUM_CLOSED_TIME, default=options[CONF_WINDOW_MINIMUM_CLOSED_TIME]), selector.TimeSelector()))
         schema_entries.append((
             vol.Required(CONF_FROST_PROTECTION_TEMPERATURE, default=options[CONF_FROST_PROTECTION_TEMPERATURE]),
             selector.NumberSelector(selector.NumberSelectorConfig(min=0, max=10, step=0.5, unit_of_measurement="°C")),
@@ -867,14 +868,6 @@ class SatOptionsFlowHandler(config_entries.OptionsFlow):
             schema_entries.append((
                 vol.Required(CONF_MAXIMUM_CONSUMPTION, default=options[CONF_MAXIMUM_CONSUMPTION]),
                 selector.NumberSelector(selector.NumberSelectorConfig(min=0, max=8, step=0.1)),
-            ))
-            schema_entries.append((
-                vol.Required(CONF_FLAME_OFF_SETPOINT_SOURCE, default=options[CONF_FLAME_OFF_SETPOINT_SOURCE]),
-                selector.SelectSelector(selector.SelectSelectorConfig(
-                    mode=SelectSelectorMode.DROPDOWN,
-                    translation_key="flame_off_setpoint_source",
-                    options=FLAME_OFF_SETPOINT_SOURCES,
-                )),
             ))
             schema_entries.append((
                 vol.Required(CONF_FLAME_OFF_SETPOINT_OFFSET_CELSIUS, default=options[CONF_FLAME_OFF_SETPOINT_OFFSET_CELSIUS]),
