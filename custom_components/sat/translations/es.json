@@ -133,7 +133,7 @@
         },
         "data_description": {
           "name": "Nombre visible en Home Assistant.",
-          "device": "URL de socket, p. ej. socket://otgw.local:25238."
+          "device": "URL de socket, p. ej. {example_socket}."
         },
         "description": "Introduzca un nombre y una URL de socket (p. ej. {example_socket}).",
         "title": "Puerta de Enlace OpenTherm (SERIAL)"
@@ -189,7 +189,7 @@
         "data": {
           "error_monitoring": "Habilitar monitoreo de errores",
           "climate_valve_offset": "Compensación de la Válvula Climática",
-          "force_pulse_width_modulation": "Forzar Modulación de Ancho de Pulso ",
+          "force_pulse_width_modulation": "Forzar Modulación de Ancho de Pulso",
           "maximum_consumption": "Consumo Máximo",
           "maximum_relative_modulation": "Modulación Relativa Máxima",
           "minimum_consumption": "Consumo Mínimo",
@@ -208,7 +208,8 @@
           "target_temperature_step": "Paso de Temperatura Objetivo",
           "thermal_comfort": "Confort Térmico",
           "flame_off_setpoint_offset_celsius": "Desfase de consigna con llama apagada",
-          "modulation_suppression_delay_seconds": "Retardo de supresión de modulación"
+          "modulation_suppression_delay_seconds": "Retardo de supresión de modulación",
+          "flame_off_setpoint_source": "Fuente de la consigna con llama apagada"
         },
         "data_description": {
           "climate_valve_offset": "Diferencia de temperatura (objetivo vs actual) para considerar una válvula abierta.",
@@ -225,14 +226,15 @@
           "simulation": "Activar modo de simulación (no se envían comandos reales a la caldera).",
           "error_monitoring": "Envía errores relacionados con SAT a Sentry para ayudar a diagnosticar problemas.",
           "force_pulse_width_modulation": "Forzar la Modulación de Ancho de Pulso aunque haya control de modulación disponible (útil para control por relé).",
-          "flame_off_setpoint_offset_celsius": "Con la llama apagada, mantiene un setpoint temporal en retorno + offset (solo Modulación de Ancho de Pulso).",
+          "flame_off_setpoint_offset_celsius": "Con la llama apagada, mantiene un setpoint temporal en la temperatura de la fuente seleccionada + offset (solo Modulación de Ancho de Pulso).",
           "modulation_suppression_delay_seconds": "Tiempo tras encender la llama antes de aplicar la supresión (solo Modulación de Ancho de Pulso).",
           "modulation_suppression_offset_celsius": "Cuánto se reduce el setpoint de impulsión durante la supresión (solo Modulación de Ancho de Pulso).",
           "flow_setpoint_offset_celsius": "Separación mínima por debajo de la temperatura de la caldera al limitar el setpoint (modo continuo).",
           "minimum_boiler_pressure": "Umbral inferior de presión para la detección del estado (bar).",
           "maximum_boiler_pressure": "Umbral superior de presión para la detección del estado (bar).",
           "maximum_pressure_drop_rate": "Caída de presión máxima permitida antes de señalar un problema (bar/h).",
-          "pressure_max_value_age": "Edad máxima de una lectura de presión antes de señalar un problema."
+          "pressure_max_value_age": "Edad máxima de una lectura de presión antes de señalar un problema.",
+          "flame_off_setpoint_source": "Base de la consigna temporal mientras la fase ON de la Modulación por Ancho de Pulso espera la llama. Elija la temperatura de impulsión si su caldera no informa la temperatura de retorno."
         },
         "title": "Avanzadas"
       },
@@ -333,7 +335,7 @@
       "description": "Este servicio restablece la parte integral del controlador PID para la entidad climate especificada. Puede ser útil si el valor integral se ha vuelto demasiado grande o si el rendimiento del PID se ha degradado."
     },
     "pulse_width_modulation": {
-      "name": "Modulación por ancho de pulso ",
+      "name": "Modulación por ancho de pulso",
       "description": "Forzar activar o desactivar la Modulación por Ancho de Pulso . Tenga en cuenta que puede activarse o desactivarse automáticamente poco después.",
       "fields": {
         "enabled": {
@@ -405,6 +407,12 @@
         "sleep": "Dormir",
         "away": "Ausente",
         "activity": "Actividad"
+      }
+    },
+    "flame_off_setpoint_source": {
+      "options": {
+        "return_temperature": "Temperatura de retorno + desplazamiento",
+        "flow_temperature": "Temperatura de impulsión + desplazamiento"
       }
     }
   }

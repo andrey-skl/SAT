@@ -133,7 +133,7 @@
         },
         "data_description": {
           "name": "Anzeigename in Home Assistant.",
-          "device": "Socket-URL, z. B. socket://otgw.local:25238."
+          "device": "Socket-URL, z. B. {example_socket}."
         },
         "description": "Geben Sie einen Namen und eine Socket-URL ein (z. B. {example_socket}).",
         "title": "OpenTherm Gateway ( SERIELL )"
@@ -208,7 +208,8 @@
           "target_temperature_step": "Schrittweite der Zieltemperatur",
           "thermal_comfort": "Thermischer Komfort",
           "flame_off_setpoint_offset_celsius": "Flamme-aus-Sollwertversatz",
-          "modulation_suppression_delay_seconds": "Verzögerung der Modulationsunterdrückung"
+          "modulation_suppression_delay_seconds": "Verzögerung der Modulationsunterdrückung",
+          "flame_off_setpoint_source": "Quelle für den Flamme-aus-Sollwert"
         },
         "data_description": {
           "climate_valve_offset": "Temperaturdifferenz (Soll vs. Ist), ab der ein Ventil als geöffnet gilt.",
@@ -225,14 +226,15 @@
           "simulation": "Simulation aktivieren (es werden keine echten Kesselbefehle gesendet).",
           "error_monitoring": "Sendet SAT-bezogene Fehler über Sentry an den Entwickler, um Probleme zu diagnostizieren.",
           "force_pulse_width_modulation": "Pulsweitenmodulation erzwingen, auch wenn Modulationssteuerung verfügbar ist (nützlich für Relaisbetrieb).",
-          "flame_off_setpoint_offset_celsius": "Bei ausgeschalteter Flamme wird ein temporärer Sollwert auf Rücklauf + Offset gehalten (nur Pulsweitenmodulation).",
+          "flame_off_setpoint_offset_celsius": "Bei ausgeschalteter Flamme wird ein temporärer Sollwert auf der gewählten Quelltemperatur + Offset gehalten (nur Pulsweitenmodulation).",
           "modulation_suppression_delay_seconds": "Zeit nach dem Flammenstart, bevor die Unterdrückung greift (nur Pulsweitenmodulation).",
           "modulation_suppression_offset_celsius": "Absenkung des Vorlauf-Sollwerts während der Unterdrückung (nur Pulsweitenmodulation).",
           "flow_setpoint_offset_celsius": "Minimaler Abstand unter der Kesseltemperatur beim Begrenzen des Sollwerts (kontinuierlicher Modus).",
           "minimum_boiler_pressure": "Untere Druckgrenze für die Zustandserkennung (bar).",
           "maximum_boiler_pressure": "Obere Druckgrenze für die Zustandserkennung (bar).",
           "maximum_pressure_drop_rate": "Maximal zulässiger Druckabfall, bevor der Druck als auffällig gemeldet wird (bar/h).",
-          "pressure_max_value_age": "Maximales Alter eines Druckmesswerts, bevor der Druck als auffällig gemeldet wird."
+          "pressure_max_value_age": "Maximales Alter eines Druckmesswerts, bevor der Druck als auffällig gemeldet wird.",
+          "flame_off_setpoint_source": "Basis für den temporären Sollwert, solange die EIN-Phase der Pulsweitenmodulation auf die Flamme wartet. Wählen Sie die Vorlauftemperatur, wenn Ihr Kessel keine Rücklauftemperatur meldet."
         },
         "title": "Erweitert"
       },
@@ -333,7 +335,7 @@
       "description": "Dieser Dienst setzt den integralen Anteil des PID-Reglers für die angegebene Klima-Entität zurück. Dies kann nützlich sein, wenn der Integralwert zu groß geworden ist oder die Leistung des PID-Reglers nachgelassen hat."
     },
     "pulse_width_modulation": {
-      "name": "Pulsweitenmodulation ",
+      "name": "Pulsweitenmodulation",
       "description": "Pulsweitenmodulation erzwingen oder deaktivieren. Beachten Sie, dass sie kurz darauf automatisch wieder ein- oder ausgeschaltet werden kann.",
       "fields": {
         "enabled": {
@@ -405,6 +407,12 @@
         "sleep": "Schlafen",
         "away": "Abwesend",
         "activity": "Aktivität"
+      }
+    },
+    "flame_off_setpoint_source": {
+      "options": {
+        "return_temperature": "Rücklauftemperatur + Offset",
+        "flow_temperature": "Vorlauftemperatur + Offset"
       }
     }
   }

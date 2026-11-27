@@ -185,6 +185,11 @@ class SatEspHomeCoordinator(SatDataUpdateCoordinator):
         return self._get_binary_sensor_value(self._keys.flame_on) or False
 
     @property
+    def supports_flame_detection(self) -> bool:
+        """A configured but missing flame sensor reads as False, so require an actual value."""
+        return self._get_binary_sensor_value(self._keys.flame_on) is not None
+
+    @property
     def hot_water_active(self) -> bool:
         return self._get_binary_sensor_value(self._keys.dhw_active) or False
 

@@ -17,6 +17,17 @@ BOILER_DEADBAND = 2
 HEATER_STARTUP_TIMEFRAME = 180
 PWM_IGNITION_TIMEOUT_SECONDS = 600.0
 DHW_OVERSHOOT_GUARD_SECONDS = 300.0
+# A real hot-water draw physically lights the burner; the OpenTherm DHW status bit alone does not prove one. The
+# bit reports "central heating is not being served", so it also turns on as a side effect of our own PWM OFF
+# phase, which made a reported draw suppress the heating that would have cleared it. A reported draw therefore
+# needs the flame to corroborate it, with a short grace so a draw is not missed before the burner lights.
+DHW_IGNITION_GRACE_SECONDS = 15.0
+# Once the flame is seen during a hot-water episode, keep suppressing this long after it drops, so burner
+# modulation or cycling during a long draw cannot flicker central heating back on.
+DHW_FLAME_HOLD_SECONDS = 60.0
+# Bound how long a hot-water report may suppress central heating, so the control loop keeps a stale report
+# from freezing the setpoint. This is a backstop; flame corroboration is the primary mechanism.
+DHW_SUPPRESSION_MAX_SECONDS = 1800.0
 
 OVERSHOOT_SUSTAIN_SECONDS = 60.0
 OVERSHOOT_REFERENCE_WINDOW_SECONDS = 300.0
@@ -92,6 +103,10 @@ CONF_OUTSIDE_SENSOR_ENTITY_ID = "outside_sensor_entity_id"
 CONF_HUMIDITY_SENSOR_ENTITY_ID = "humidity_sensor_entity_id"
 CONF_WIND_SENSOR_ENTITY_ID = "wind_sensor_entity_id"
 CONF_FLAME_OFF_SETPOINT_OFFSET_CELSIUS = "flame_off_setpoint_offset_celsius"
+CONF_FLAME_OFF_SETPOINT_SOURCE = "flame_off_setpoint_source"
+FLAME_OFF_SETPOINT_SOURCE_RETURN = "return_temperature"
+FLAME_OFF_SETPOINT_SOURCE_FLOW = "flow_temperature"
+FLAME_OFF_SETPOINT_SOURCES = [FLAME_OFF_SETPOINT_SOURCE_RETURN, FLAME_OFF_SETPOINT_SOURCE_FLOW]
 CONF_MODULATION_SUPPRESSION_DELAY_SECONDS = "modulation_suppression_delay_seconds"
 CONF_MODULATION_SUPPRESSION_OFFSET_CELSIUS = "modulation_suppression_offset_celsius"
 CONF_FLOW_SETPOINT_OFFSET_CELSIUS = "flow_setpoint_offset_celsius"
@@ -158,6 +173,7 @@ OPTIONS_DEFAULTS = {
     CONF_FORCE_PULSE_WIDTH_MODULATION: False,
 
     CONF_FLAME_OFF_SETPOINT_OFFSET_CELSIUS: 18.0,
+    CONF_FLAME_OFF_SETPOINT_SOURCE: FLAME_OFF_SETPOINT_SOURCE_RETURN,
     CONF_MODULATION_SUPPRESSION_DELAY_SECONDS: 20,
     CONF_MODULATION_SUPPRESSION_OFFSET_CELSIUS: 1.0,
     CONF_FLOW_SETPOINT_OFFSET_CELSIUS: 2.0,
