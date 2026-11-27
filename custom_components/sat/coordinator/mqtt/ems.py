@@ -73,6 +73,10 @@ class SatEmsMqttCoordinator(SatMqttCoordinator):
         return self._is_on(self.data.get(DATA_FLAME_ACTIVE))
 
     @property
+    def supports_flame_detection(self) -> bool:
+        return self.data.get(DATA_FLAME_ACTIVE) is not None
+
+    @property
     def hot_water_active(self) -> bool:
         activity_keys = (DATA_DHW_ACTIVE, f"dhw/{DATA_DHW_ACTIVE}", f"dhw/{DATA_DHW_CHARGING}", f"dhw{DATA_DHW_CHARGING}")
         activity = [self.data.get(key) for key in activity_keys if self.data.get(key) is not None]

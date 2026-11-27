@@ -260,7 +260,7 @@ class SatDemandControl:
         if self._window_paused:
             return HeatingBlock.WINDOW
 
-        if self._coordinator.hot_water_active:
+        if self._heating_control.hot_water_suppresses_heating:
             return HeatingBlock.HOT_WATER
 
         return None if self.valves_open else HeatingBlock.VALVES_CLOSED

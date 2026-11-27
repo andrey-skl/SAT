@@ -186,6 +186,10 @@ class SatSerialCoordinator(SatDataUpdateCoordinator):
     def flame_active(self) -> bool:
         return bool(self.get(DATA_SLAVE_FLAME_ON))
 
+    @property
+    def supports_flame_detection(self) -> bool:
+        return self.get(DATA_SLAVE_FLAME_ON) is not None
+
     def get(self, key: str) -> Optional[Any]:
         """Get the value for the given `key` from the boiler data."""
         return self.data[BOILER].get(key)
