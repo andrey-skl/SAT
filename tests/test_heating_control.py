@@ -885,11 +885,16 @@ async def test_suppression_setpoint_is_clamped_to_maximum(hass, monkeypatch, coo
 
 
 def _report_hot_water(heating_control, monkeypatch, *, flame: bool = False) -> dict:
-    """Report hot water, and return the burner flag so a test can light or drop the flame mid-episode."""
+    """Report hot water, and return the burner flag so a test can light or drop the flame mid-episode.
+
+    Also declares flame detection as supported, because the base coordinator derives flame activity from the
+    heating state instead of measuring it and therefore reports no corroboration capability by default.
+    """
     burner = {"flame": flame}
 
     monkeypatch.setattr(type(heating_control._coordinator), "hot_water_active", property(lambda self: True))
     monkeypatch.setattr(type(heating_control._coordinator), "flame_active", property(lambda self: burner["flame"]))
+    monkeypatch.setattr(type(heating_control._coordinator), "supports_flame_detection", property(lambda self: True))
     monkeypatch.setattr(heating_control._pwm, "update", lambda *args, **kwargs: None)
 
     return burner
@@ -1143,4 +1148,24 @@ async def test_hot_water_flame_observed_while_heating_off_survives_into_pwm(heat
 
     await heating_control.update(_make_demand(46.2))
 
+    assert heating_control.control_setpoint == MINIMUM_SETPOINT
+
+
+async def test_hot_water_without_flame_telemetry_keeps_capped_suppression(heating_control, coordinator, monkeypatch):
+    """A device that cannot report the flame must not be read as "the burner is off".
+
+    Backends such as ESPHome return None for a configured but missing flame sensor and collapse that to False.
+    Treating that as proof of no draw would release central heating after the ignition grace during a genuine
+    hot-water episode. Without corroboration the previous capped behaviour has to stand.
+    """
+    _enable_pwm(heating_control, PWMStatus.ON)
+    burner = _report_hot_water(heating_control, monkeypatch, flame=False)
+    monkeypatch.setattr(type(coordinator), "supports_flame_detection", property(lambda self: False))
+
+    heating_control._device_tracker._last_hot_water_on_at = timestamp() - 60.0
+    heating_control._control_setpoint = 46.2
+
+    await heating_control.update(_make_demand(46.2))
+
+    assert burner["flame"] is False
     assert heating_control.control_setpoint == MINIMUM_SETPOINT

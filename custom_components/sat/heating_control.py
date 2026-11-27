@@ -649,7 +649,15 @@ class SatHeatingControl:
         lights, and a hold-off after the flame drops so burner cycling during a long draw cannot switch
         central heating back on.
         """
-        if device_state.flame_active:
+        flame_active: bool = getattr(device_state, "flame_active", False)
+        corroboration_available = getattr(self._coordinator, "supports_flame_detection", False)
+
+        if not corroboration_available:
+            # The device cannot tell us whether the burner is lit, so flame must not be read as "not a draw".
+            # Fall back to the previous behaviour and let the cap bound the suppression instead.
+            return True
+
+        if flame_active:
             self._dhw_flame_seen_at = timestamp()
             return True
 

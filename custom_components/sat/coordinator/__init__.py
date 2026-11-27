@@ -172,6 +172,16 @@ class SatDataUpdateCoordinator(DataUpdateCoordinator):
         return self.active
 
     @property
+    def supports_flame_detection(self) -> bool:
+        """Whether flame_active reflects a real burner sensor rather than a default.
+
+        Backends that cannot report the flame return False here, so hot-water corroboration is not attempted on
+        the strength of a value that only means "unknown". The default is False because the base implementation
+        derives flame activity from the heating state instead of measuring it.
+        """
+        return False
+
+    @property
     def hot_water_active(self) -> bool:
         """Whether domestic hot water is active."""
         return False
